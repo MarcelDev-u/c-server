@@ -5,11 +5,89 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chat Room</title>
   <style>
-    body { font-family: sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; }
-    #messages { border: 1px solid #ccc; border-radius: 8px; min-height: 320px; padding: 1rem; overflow-y: auto; }
+    :root {
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --border: #d7dbe3;
+      --mine: #d7f0ff;
+      --other: #f0f2f7;
+      --system: #fff8d8;
+      --text: #1a1d24;
+      --muted: #5d6576;
+    }
+
+    body {
+      font-family: sans-serif;
+      max-width: 860px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    #messages {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      min-height: 320px;
+      max-height: 62vh;
+      padding: 1rem;
+      overflow-y: auto;
+      background: var(--panel);
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+
+    .row {
+      display: flex;
+      width: 100%;
+    }
+
+    .row.mine {
+      justify-content: flex-end;
+    }
+
+    .row.other {
+      justify-content: flex-start;
+    }
+
+    .row.system {
+      justify-content: center;
+    }
+
+    .bubble {
+      border-radius: 14px;
+      padding: 0.55rem 0.75rem;
+      max-width: 78%;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+      border: 1px solid var(--border);
+    }
+
+    .row.mine .bubble {
+      background: var(--mine);
+    }
+
+    .row.other .bubble {
+      background: var(--other);
+    }
+
+    .row.system .bubble {
+      background: var(--system);
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    .sender {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-bottom: 0.2rem;
+    }
+
     #composer { margin-top: 1rem; display: flex; gap: 0.5rem; }
-    #text { flex: 1; padding: 0.7rem; }
-    button { padding: 0.7rem 1rem; }
+    #text { flex: 1; padding: 0.7rem; border: 1px solid var(--border); border-radius: 8px; }
+    button { padding: 0.7rem 1rem; border: 1px solid var(--border); border-radius: 8px; background: #eef2ff; }
     .meta { color: #555; font-size: 0.9rem; margin-bottom: 0.5rem; }
   </style>
 </head>
@@ -36,16 +114,51 @@
     const form = document.getElementById('composer');
     const input = document.getElementById('text');
 
-    function addLine(text) {
-      const line = document.createElement('div');
-      line.textContent = text;
-      messages.appendChild(line);
+    function addSystem(text) {
+      const row = document.createElement('div');
+      row.className = 'row system';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+      row.appendChild(bubble);
+      messages.appendChild(row);
       messages.scrollTop = messages.scrollHeight;
     }
 
-    ws.addEventListener('open', () => addLine('Connected.'));
-    ws.addEventListener('close', () => addLine('Disconnected from server.'));
-    ws.addEventListener('message', (event) => addLine(event.data));
+    function addChatLine(sender, text) {
+      const row = document.createElement('div');
+      row.className = `row ${sender === name ? 'mine' : 'other'}`;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+
+      const senderEl = document.createElement('span');
+      senderEl.className = 'sender';
+      senderEl.textContent = sender;
+
+      const msgEl = document.createElement('span');
+      msgEl.textContent = text;
+
+      bubble.appendChild(senderEl);
+      bubble.appendChild(msgEl);
+      row.appendChild(bubble);
+      messages.appendChild(row);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    ws.addEventListener('open', () => addSystem('Connected.'));
+    ws.addEventListener('close', () => addSystem('Disconnected from server.'));
+    ws.addEventListener('message', (event) => {
+      const raw = String(event.data || '');
+      const sep = raw.indexOf(': ');
+      if (sep > 0) {
+        const sender = raw.slice(0, sep);
+        const text = raw.slice(sep + 2);
+        addChatLine(sender, text);
+      } else {
+        addSystem(raw);
+      }
+    });
 
     form.addEventListener('submit', (e) => {
       e.preventDefault();

@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <CommonCrypto/CommonDigest.h>
+#include <sqlite3.h>
 
 #define PORT 8080
 #define REQUEST_BUF_SIZE 8192
@@ -16,6 +17,8 @@
 #define MAX_WS_CLIENTS 128
 #define MAX_NAME_LEN 64
 #define MAX_WS_PAYLOAD 4096
+#define CHAT_DB_PATH "./chat.db"
+#define HISTORY_LIMIT 50
 
 // Route mapping loaded from config file:
 //   url_path -> html file path inside ./public
@@ -31,6 +34,8 @@ typedef struct {
 } WsClient;
 
 static const char *WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+static sqlite3 *g_db = NULL;
+static int send_ws_text(int fd, const char *text);
 
 static int send_all(int fd, const void *buf, size_t len) {
     const char *p = (const char *)buf;
@@ -42,6 +47,98 @@ static int send_all(int fd, const void *buf, size_t len) {
         p += n;
         len -= (size_t)n;
     }
+    return 0;
+}
+
+static int chat_db_init(const char *db_path) {
+    const char *sql =
+        "CREATE TABLE IF NOT EXISTS messages ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "name TEXT NOT NULL,"
+        "message TEXT NOT NULL,"
+        "created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+        ");";
+
+    if (sqlite3_open(db_path, &g_db) != SQLITE_OK) {
+        fprintf(stderr, "sqlite open failed: %s\n", sqlite3_errmsg(g_db));
+        return -1;
+    }
+
+    char *err = NULL;
+    if (sqlite3_exec(g_db, sql, NULL, NULL, &err) != SQLITE_OK) {
+        fprintf(stderr, "sqlite schema error: %s\n", err ? err : "unknown");
+        sqlite3_free(err);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int chat_db_insert_message(const char *name, const char *message) {
+    static const char *sql = "INSERT INTO messages(name, message) VALUES(?, ?);";
+    sqlite3_stmt *stmt = NULL;
+
+    if (!g_db) {
+        return -1;
+    }
+
+    if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+
+    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, message, -1, SQLITE_TRANSIENT);
+
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE ? 0 : -1;
+}
+
+static int send_recent_history(int fd, int limit) {
+    static const char *sql =
+        "SELECT name, message FROM ("
+        "SELECT id, name, message FROM messages ORDER BY id DESC LIMIT ?"
+        ") ORDER BY id ASC;";
+    sqlite3_stmt *stmt = NULL;
+
+    if (!g_db) {
+        return -1;
+    }
+
+    if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return -1;
+    }
+    sqlite3_bind_int(stmt, 1, limit);
+
+    while (1) {
+        int rc = sqlite3_step(stmt);
+        if (rc == SQLITE_DONE) {
+            break;
+        }
+        if (rc != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+
+        const unsigned char *name = sqlite3_column_text(stmt, 0);
+        const unsigned char *message = sqlite3_column_text(stmt, 1);
+
+        char line[MAX_NAME_LEN + 2 + MAX_WS_PAYLOAD + 1];
+        snprintf(
+            line,
+            sizeof(line),
+            "%s: %s",
+            name ? (const char *)name : "anon",
+            message ? (const char *)message : ""
+        );
+
+        if (send_ws_text(fd, line) < 0) {
+            sqlite3_finalize(stmt);
+            return -1;
+        }
+    }
+
+    sqlite3_finalize(stmt);
     return 0;
 }
 
@@ -517,6 +614,7 @@ static int handle_ws_frame(WsClient *clients, int idx) {
 
     if (opcode == 0x1) {
         // Text message: broadcast as "name: message" to every connected client.
+        chat_db_insert_message(clients[idx].name, (char *)payload);
         char out[MAX_NAME_LEN + 2 + MAX_WS_PAYLOAD + 1];
         snprintf(out, sizeof(out), "%s: %s", clients[idx].name, (char *)payload);
         broadcast_message(clients, out);
@@ -589,6 +687,10 @@ static int handle_websocket_upgrade(int client_fd, const char *request, const ch
         return -1;
     }
 
+    if (send_recent_history(client_fd, HISTORY_LIMIT) != 0) {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -651,6 +753,11 @@ int main(void) {
         return 1;
     }
 
+    if (chat_db_init(CHAT_DB_PATH) != 0) {
+        fprintf(stderr, "Could not initialize SQLite DB at %s\n", CHAT_DB_PATH);
+        return 1;
+    }
+
     WsClient clients[MAX_WS_CLIENTS];
     for (int i = 0; i < MAX_WS_CLIENTS; i++) {
         clients[i].fd = -1;
@@ -690,6 +797,7 @@ int main(void) {
 
     printf("Server running at http://127.0.0.1:%d\n", PORT);
     printf("Routes loaded: %d\n", route_count);
+    printf("Chat DB: %s\n", CHAT_DB_PATH);
     printf("WebSocket chat endpoint: ws://127.0.0.1:%d/ws?name=YOUR_NAME\n", PORT);
     printf("Press Ctrl+C to stop.\n");
 
@@ -731,6 +839,9 @@ int main(void) {
         }
     }
 
+    if (g_db) {
+        sqlite3_close(g_db);
+    }
     close(server_fd);
     return 0;
 }
