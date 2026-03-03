@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Enter Chat</title>
+  <style>
+    body { font-family: sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
+    input, button { font-size: 1rem; padding: 0.6rem; }
+    form { display: flex; gap: 0.5rem; }
+    input { flex: 1; }
+  </style>
+</head>
+<body>
+  <h1>Simple Live Chat</h1>
+  <p>Pick a name and enter the room.</p>
+
+  <form id="joinForm" action="/chat" method="GET">
+    <input name="name" id="name" placeholder="Your name" required maxlength="40" />
+    <button type="submit">Join</button>
+  </form>
+</body>
+</html>

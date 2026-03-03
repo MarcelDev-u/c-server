@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat Room</title>
+  <style>
+    body { font-family: sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; }
+    #messages { border: 1px solid #ccc; border-radius: 8px; min-height: 320px; padding: 1rem; overflow-y: auto; }
+    #composer { margin-top: 1rem; display: flex; gap: 0.5rem; }
+    #text { flex: 1; padding: 0.7rem; }
+    button { padding: 0.7rem 1rem; }
+    .meta { color: #555; font-size: 0.9rem; margin-bottom: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Shared Chat</h1>
+  <div class="meta" id="meta"></div>
+  <div id="messages"></div>
+
+  <form id="composer">
+    <input id="text" autocomplete="off" placeholder="Write a message" maxlength="500" />
+    <button type="submit">Send</button>
+  </form>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const name = (params.get('name') || 'anon').trim() || 'anon';
+
+    document.getElementById('meta').textContent = `Connected as: ${name}`;
+
+    const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const ws = new WebSocket(`${wsProto}://${window.location.host}/ws?name=${encodeURIComponent(name)}`);
+
+    const messages = document.getElementById('messages');
+    const form = document.getElementById('composer');
+    const input = document.getElementById('text');
+
+    function addLine(text) {
+      const line = document.createElement('div');
+      line.textContent = text;
+      messages.appendChild(line);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    ws.addEventListener('open', () => addLine('Connected.'));
+    ws.addEventListener('close', () => addLine('Disconnected from server.'));
+    ws.addEventListener('message', (event) => addLine(event.data));
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const msg = input.value.trim();
+      if (!msg || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(msg);
+      input.value = '';
+      input.focus();
+    });
+  </script>
+</body>
+</html>
